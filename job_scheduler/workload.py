@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 import time
 from typing import ClassVar, Dict, List, Optional
 import logging
+import threading
 
 from .resource import Device, Resource
 
@@ -32,9 +33,67 @@ class Job:
     job_id: str
     base_url: str
     devices: list[Device]
-    gpu_memory_mb: Dict[str, int]
+    gpu_memory_mb: Dict[str, int] = field(default_factory=dict)
     priority: int = 5
     timestamp: float = field(default_factory=time.time)
+
+    @classmethod
+    def verify_values(
+        cls,
+        job_id: str,
+        base_url: str,
+        devices: list[Device],
+        gpu_memory_mb: Dict[str, int],
+        priority: int,
+        timestamp: float,
+    ):
+        if not job_id:
+            raise RuntimeError("job_id is required")
+        if not base_url:
+            raise RuntimeError("base_url is required")
+        if not devices:
+            raise RuntimeError("devices must not be empty")
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise RuntimeError("priority must be an integer")
+        if priority < 0:
+            raise RuntimeError("priority must be >= 0")
+        if not isinstance(timestamp, (int, float)):
+            raise RuntimeError("timestamp must be a number")
+
+        device_uuids = set()
+        for device in devices:
+            if not isinstance(device, Device):
+                raise RuntimeError("all devices must be Device instances")
+            if device.uuid in device_uuids:
+                raise RuntimeError(f"duplicate device uuid in job devices: {device.uuid}")
+            device_uuids.add(device.uuid)
+
+        for uuid in device_uuids:
+            if uuid not in gpu_memory_mb:
+                raise RuntimeError(f"missing gpu_memory_mb for device uuid: {uuid}")
+
+        for uuid, value in gpu_memory_mb.items():
+            if uuid not in device_uuids:
+                raise RuntimeError(f"unknown gpu_memory_mb device uuid: {uuid}")
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise RuntimeError(f"gpu_memory_mb must be integer for device uuid: {uuid}")
+            if value < 0:
+                raise RuntimeError(f"gpu_memory_mb must be >= 0 for device uuid: {uuid}")
+
+    def __post_init__(self):
+        if len(self.gpu_memory_mb) != 0:
+            raise RuntimeError("gpu_memory_mb should not be provided in Job constructor, it will be initialized based on devices.")
+        # Initialize memory map by devices and preserve provided values.
+        for device in self.devices:
+            self.gpu_memory_mb[device.uuid] = device.memory_size_mb
+        Job.verify_values(
+            job_id=self.job_id,
+            base_url=self.base_url,
+            devices=self.devices,
+            gpu_memory_mb=self.gpu_memory_mb,
+            priority=self.priority,
+            timestamp=self.timestamp,
+        )
 
 
 class Workload:
@@ -54,6 +113,7 @@ class Workload:
         self.resource: Resource = resource
         self.jobs: List[Job] = []
         self.job_map: Dict[str, List[Job]] = {}
+        self._lock = threading.RLock()
         if jobs:
             for job in jobs:
                 self.jobs.append(job)
@@ -66,8 +126,9 @@ class Workload:
 
     def reset(self):
         """Clear all jobs while keeping singleton instance."""
-        self.jobs.clear()
-        self.job_map.clear()
+        with self._lock:
+            self.jobs.clear()
+            self.job_map.clear()
 
     def _add_job_to_map(self, job: Job):
         for device in job.devices:
@@ -84,49 +145,57 @@ class Workload:
 
     def add_job(self, job: Job) -> bool:
         """Add a job to the workload if resource requirements are met."""
-        for device in job.devices:
-            resource_device = self.resource.get_device_by_uuid(device.uuid)
-            if resource_device is None:
-                WorkloadError.log_error(
-                    WorkloadError.DEVICE_NOT_FOUND,
-                    job_id=job.job_id,
-                    device_uuid=device.uuid,
-                )
-                return False
+        with self._lock:
+            for device in job.devices:
+                resource_device = self.resource.get_device_by_uuid(device.uuid)
+                if resource_device is None:
+                    WorkloadError.log_error(
+                        WorkloadError.DEVICE_NOT_FOUND,
+                        job_id=job.job_id,
+                        device_uuid=device.uuid,
+                    )
+                    return False
 
-            requested_memory = job.gpu_memory_mb.get(device.uuid)
-            if requested_memory is None or requested_memory < 0:
-                WorkloadError.log_error(
-                    WorkloadError.INVALID_REQUESTED_MEMORY,
-                    job_id=job.job_id,
-                    device_uuid=device.uuid,
-                    requested_memory=requested_memory,
-                )
-                return False
+                requested_memory = job.gpu_memory_mb.get(device.uuid)
+                if requested_memory is None or requested_memory < 0:
+                    WorkloadError.log_error(
+                        WorkloadError.INVALID_REQUESTED_MEMORY,
+                        job_id=job.job_id,
+                        device_uuid=device.uuid,
+                        requested_memory=requested_memory,
+                    )
+                    return False
 
-            current_usage = self.get_total_memory_usage_on_device(resource_device)
-            if current_usage + requested_memory > resource_device.memory_size_mb:
-                WorkloadError.log_error(
-                    WorkloadError.INSUFFICIENT_MEMORY,
-                    job_id=job.job_id,
-                    device_uuid=device.uuid,
-                    current_usage_mb=current_usage,
-                    requested_mb=requested_memory,
-                    capacity_mb=resource_device.memory_size_mb,
-                )
-                return False
+                current_usage = self.get_total_memory_usage_on_device(resource_device)
+                if current_usage + requested_memory > resource_device.memory_size_mb:
+                    WorkloadError.log_error(
+                        WorkloadError.INSUFFICIENT_MEMORY,
+                        job_id=job.job_id,
+                        device_uuid=device.uuid,
+                        current_usage_mb=current_usage,
+                        requested_mb=requested_memory,
+                        capacity_mb=resource_device.memory_size_mb,
+                    )
+                    return False
 
-        self.jobs.append(job)
-        self._add_job_to_map(job)
-        logger.debug(
-            "Accept add_job: job_id=%s devices=%s",
-            job.job_id,
-            [device.uuid for device in job.devices],
-        )
-        return True
+            self.jobs.append(job)
+            try:
+                self._add_job_to_map(job)
+            except Exception:
+                self.jobs.pop()
+                self._remove_job_from_map(job)
+                raise
+
+            logger.debug(
+                "Accept add_job: job_id=%s devices=%s",
+                job.job_id,
+                [device.uuid for device in job.devices],
+            )
+            return True
 
     def get_jobs_on_device(self, device: Device, sort: bool = False) -> List[Job]:
-        jobs = list(self.job_map.get(device.uuid, []))
+        with self._lock:
+            jobs = list(self.job_map.get(device.uuid, []))
         if sort:
             # FCFS: earlier timestamp first.
             jobs.sort(key=lambda job: job.timestamp)
@@ -134,13 +203,50 @@ class Workload:
 
     def get_total_memory_usage_on_device(self, device: Device) -> int:
         """Compute total GPU memory usage for all jobs on the specified device."""
-        return sum(job.gpu_memory_mb.get(device.uuid, 0) for job in self.job_map.get(device.uuid, []))
+        with self._lock:
+            return sum(
+                job.gpu_memory_mb.get(device.uuid, 0)
+                for job in self.job_map.get(device.uuid, [])
+            )
+
+    def debug_print(self) -> dict:
+        """Print and return current workload snapshot for debugging."""
+        with self._lock:
+            snapshot = {
+                "job_count": len(self.jobs),
+                "jobs": [
+                    {
+                        "job_id": job.job_id,
+                        "base_url": job.base_url,
+                        "priority": job.priority,
+                        "devices": [device.uuid for device in job.devices],
+                        "gpu_memory_mb": dict(job.gpu_memory_mb),
+                    }
+                    for job in self.jobs
+                ],
+                "job_map": {
+                    device_uuid: [job.job_id for job in jobs]
+                    for device_uuid, jobs in self.job_map.items()
+                },
+            }
+        logger.info("debug workload snapshot=%s", snapshot)
+        return snapshot
 
     def remove_job(self, job_id: str) -> bool:
-        target = next((job for job in self.jobs if job.job_id == job_id), None)
-        if target is None:
-            return False
+        with self._lock:
+            target = next((job for job in self.jobs if job.job_id == job_id), None)
+            if target is None:
+                return False
 
-        self.jobs = [j for j in self.jobs if j.job_id != job_id]
-        self._remove_job_from_map(target)
-        return True
+            previous_jobs = list(self.jobs)
+            previous_job_map = {uuid: list(jobs) for uuid, jobs in self.job_map.items()}
+
+            self.jobs = [j for j in self.jobs if j.job_id != job_id]
+            try:
+                self._remove_job_from_map(target)
+            except Exception:
+                self.jobs = previous_jobs
+                self.job_map = previous_job_map
+                raise
+
+            return True

@@ -120,3 +120,22 @@ def test_add_device_rejects_duplicate_host_id_pair():
     with pytest.raises(RuntimeError, match="Duplicate \(host_name, id\) pair"):
         resource.add_device(d2)
 
+
+def test_resource_debug_print_hosts_shape():
+    resource = Resource()
+    d1 = Device.from_request_json(device_payload(host_name="node-a", id=2, uuid="uuid-2"))
+    d2 = Device.from_request_json(device_payload(host_name="node-a", id=0, uuid="uuid-0"))
+    d3 = Device.from_request_json(device_payload(host_name="node-b", id=1, uuid="uuid-1"))
+
+    resource.add_device(d1)
+    resource.add_device(d2)
+    resource.add_device(d3)
+
+    snapshot = resource.debug_print()
+
+    assert snapshot["device_count"] == 3
+    assert "hosts" in snapshot
+    assert snapshot["hosts"]["node-a"][2]["uuid"] == "uuid-2"
+    assert snapshot["hosts"]["node-a"][0]["type"] == "GPU"
+    assert snapshot["hosts"]["node-b"][1]["vendor"] == "NVIDIA"
+

@@ -42,8 +42,7 @@ def test_add_job_success_and_job_map_indexing():
         job_id="job-1",
         base_url="http://worker-a",
         devices=[d1, d2],
-        gpu_memory_mb={"gpu-1": 4000, "gpu-2": 6000},
-    )
+   )
 
     accepted = workload.add_job(job)
     logger.info("Job add result=%s job_map_keys=%s", accepted, list(workload.job_map.keys()))
@@ -64,7 +63,6 @@ def test_add_job_rejects_when_device_not_found_in_resource():
         job_id="job-2",
         base_url="http://worker-b",
         devices=[d1, missing],
-        gpu_memory_mb={"gpu-1": 2000, "gpu-missing": 3000},
     )
 
     accepted = workload.add_job(job)
@@ -84,7 +82,6 @@ def test_add_job_rejects_when_memory_exceeds_device_capacity():
         job_id="job-existing",
         base_url="http://worker-c",
         devices=[d1],
-        gpu_memory_mb={"gpu-1": 5000},
     )
     assert workload.add_job(existing) is True
 
@@ -92,7 +89,6 @@ def test_add_job_rejects_when_memory_exceeds_device_capacity():
         job_id="job-overflow",
         base_url="http://worker-d",
         devices=[d1],
-        gpu_memory_mb={"gpu-1": 4000},
     )
 
     accepted = workload.add_job(incoming)
@@ -111,8 +107,8 @@ def test_add_job_rejects_with_invalid_requested_memory_error_code(caplog):
         job_id="job-invalid-memory",
         base_url="http://worker-invalid",
         devices=[d1],
-        gpu_memory_mb={},
     )
+    job.gpu_memory_mb = {}
 
     with caplog.at_level(logging.ERROR):
         accepted = workload.add_job(job)
@@ -131,14 +127,12 @@ def test_get_jobs_on_device_sort_fcfs_by_timestamp():
         job_id="job-late",
         base_url="http://worker-late",
         devices=[d1],
-        gpu_memory_mb={"gpu-1": 1000},
         timestamp=200.0,
     )
     early = Job(
         job_id="job-early",
         base_url="http://worker-early",
         devices=[d1],
-        gpu_memory_mb={"gpu-1": 1000},
         timestamp=100.0,
     )
 
@@ -162,13 +156,11 @@ def test_get_total_memory_usage_on_device_uses_per_device_memory():
         job_id="job-1",
         base_url="http://worker-1",
         devices=[d1, d2],
-        gpu_memory_mb={"gpu-1": 2000, "gpu-2": 3000},
     )
     j2 = Job(
         job_id="job-2",
         base_url="http://worker-2",
         devices=[d1],
-        gpu_memory_mb={"gpu-1": 1500},
     )
 
     workload.job_map[d1.uuid] = [j1, j2]
@@ -177,8 +169,8 @@ def test_get_total_memory_usage_on_device_uses_per_device_memory():
     d1_total = workload.get_total_memory_usage_on_device(d1)
     d2_total = workload.get_total_memory_usage_on_device(d2)
     logger.info("Device totals: d1=%s d2=%s", d1_total, d2_total)
-    assert d1_total == 3500
-    assert d2_total == 3000
+    assert d1_total == 64000
+    assert d2_total == 32000
 
 
 def test_remove_job_updates_jobs_and_job_map():
@@ -191,13 +183,11 @@ def test_remove_job_updates_jobs_and_job_map():
         job_id="job-remove",
         base_url="http://worker-rm",
         devices=[d1, d2],
-        gpu_memory_mb={"gpu-1": 1000, "gpu-2": 1000},
     )
     keep = Job(
         job_id="job-keep",
         base_url="http://worker-keep",
         devices=[d1],
-        gpu_memory_mb={"gpu-1": 500},
     )
 
     workload.jobs = [target, keep]
@@ -219,3 +209,31 @@ def test_remove_job_returns_false_when_missing():
     logger.info("Running test_remove_job_returns_false_when_missing")
     resource, workload = make_resource_and_workload()
     assert workload.remove_job("missing-job") is False
+
+
+def test_job_verify_values_accepts_valid_payload():
+    d1 = make_device("gpu-1", 0, 16000)
+    d2 = make_device("gpu-2", 1, 24000)
+
+    Job.verify_values(
+        job_id="job-ok",
+        base_url="http://worker-ok",
+        devices=[d1, d2],
+        gpu_memory_mb={"gpu-1": 1000, "gpu-2": 2000},
+        priority=3,
+        timestamp=123.45,
+    )
+
+
+def test_job_verify_values_rejects_unknown_gpu_memory_uuid():
+    d1 = make_device("gpu-1", 0, 16000)
+
+    with pytest.raises(RuntimeError, match="unknown gpu_memory_mb device uuid"):
+        Job.verify_values(
+            job_id="job-bad",
+            base_url="http://worker-bad",
+            devices=[d1],
+            gpu_memory_mb={"gpu-1": 1000, "gpu-x": 2000},
+            priority=1,
+            timestamp=1.0,
+        )

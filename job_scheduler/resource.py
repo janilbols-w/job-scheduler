@@ -1,5 +1,9 @@
 from dataclasses import dataclass, asdict
 from typing import ClassVar, Optional
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Device:
@@ -120,6 +124,26 @@ class Resource:
     def get_all_devices(self):
         """Get all device resources."""
         return [device.to_dict() for device in self.devices]
+
+    def debug_print(self) -> dict:
+        """Print and return current resource snapshot for debugging."""
+        hosts: dict[str, dict[int, dict[str, object]]] = {}
+        for device in self.devices:
+            host_devices = hosts.setdefault(device.host_name, {})
+            host_devices[device.id] = {
+                "uuid": device.uuid,
+                "type": device.type,
+                "vendor": device.vendor,
+                "memory_size_mb": device.memory_size_mb,
+            }
+
+        device_count = len(self.devices)
+        snapshot = {
+            "device_count": device_count,
+            "hosts": hosts,
+        }
+        logger.info("debug resource snapshot=%s", snapshot)
+        return snapshot
 
     def get_device_by_uuid(self, uuid: str) -> Optional[Device]:
         """Get a device by its UUID."""
