@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual envs
+venv/
+.env/
+.envrc
+.envs/
+
+# Distribution
+build/
+dist/
+*.egg-info/
+
+# VSCode
+.vscode/
+
+# Pytest cache
+.pytest_cache/
+
+# Local IDE files
+*.swp
+*.swo
