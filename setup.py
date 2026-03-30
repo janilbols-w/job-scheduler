@@ -7,11 +7,12 @@ setup(
     install_requires=[
         'fastapi>=0.90.0',
         'uvicorn>=0.20.0',
+        'matplotlib>=3.5.0',
         'pytest>=7.0.0',
     ],
     entry_points={
         'console_scripts': [
-            'job_scheduler=job_scheduler.api_service:app',
+            'job_scheduler=job_scheduler.api.api_service:app',
         ],
     },
 )

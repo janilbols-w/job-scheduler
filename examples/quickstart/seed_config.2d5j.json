@@ -1,0 +1,120 @@
+{
+  "devices": [
+    {
+      "uuid": "d-0",
+      "host_name": "host-0",
+      "id": 0,
+      "type": "GPU",
+      "vendor": "NVIDIA",
+      "memory_size_mb": 16000
+    },
+    {
+      "uuid": "d-1",
+      "host_name": "host-0",
+      "id": 1,
+      "type": "GPU",
+      "vendor": "NVIDIA",
+      "memory_size_mb": 16000
+    }
+  ],
+  "seed_jobs": [
+    {
+      "job_id": "seed-job-0",
+      "base_url": "http://127.0.0.1:9200",
+      "priority": 5,
+      "init_delay_seconds": 0.5,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
+      "devices": [
+        {
+          "uuid": "d-0",
+          "host_name": "host-0",
+          "id": 0,
+          "type": "GPU",
+          "vendor": "NVIDIA",
+          "memory_size_mb": 12000
+        }
+      ]
+    },
+    {
+      "job_id": "seed-job-1",
+      "base_url": "http://127.0.0.1:9201",
+      "priority": 6,
+      "init_delay_seconds": 1.0,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
+      "devices": [
+        {
+          "uuid": "d-1",
+          "host_name": "host-0",
+          "id": 1,
+          "type": "GPU",
+          "vendor": "NVIDIA",
+          "memory_size_mb": 4000
+        }
+      ]
+    },
+    {
+      "job_id": "seed-job-2",
+      "base_url": "http://127.0.0.1:9202",
+      "priority": 4,
+      "init_delay_seconds": 1.5,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
+      "devices": [
+        {
+          "uuid": "d-0",
+          "host_name": "host-0",
+          "id": 0,
+          "type": "GPU",
+          "vendor": "NVIDIA",
+          "memory_size_mb": 6000
+        },
+        {
+          "uuid": "d-1",
+          "host_name": "host-0",
+          "id": 1,
+          "type": "GPU",
+          "vendor": "NVIDIA",
+          "memory_size_mb": 6000
+        }
+      ]
+    },
+    {
+      "job_id": "seed-job-3",
+      "base_url": "http://127.0.0.1:9203",
+      "priority": 3,
+      "init_delay_seconds": 2.0,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
+      "devices": [
+        {
+          "uuid": "d-0",
+          "host_name": "host-0",
+          "id": 0,
+          "type": "GPU",
+          "vendor": "NVIDIA",
+          "memory_size_mb": 8000
+        }
+      ]
+    },
+    {
+      "job_id": "seed-job-4",
+      "base_url": "http://127.0.0.1:9204",
+      "priority": 3,
+      "init_delay_seconds": 2.5,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
+      "devices": [
+        {
+          "uuid": "d-1",
+          "host_name": "host-0",
+          "id": 1,
+          "type": "GPU",
+          "vendor": "NVIDIA",
+          "memory_size_mb": 8000
+        }
+      ]
+    }
+  ]
+}
