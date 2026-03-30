@@ -380,6 +380,10 @@ For a scripted local environment (start API server, seed 4 devices across `host-
 - [examples/quickstart/seed_test_env.py](examples/quickstart/seed_test_env.py)
 - [examples/quickstart/mock_job.py](examples/quickstart/mock_job.py)
 
+Sample all-in-one dashboard output:
+
+![All-in-One Dashboard](figures/all_in_one_dashboard.png)
+
 ## Testing
 
 Run the full test suite with:
