@@ -81,6 +81,9 @@ def test_generate_trace_graph_writes_device_memory_stack_plot(tmp_path, monkeypa
         def stackplot(self, *args, **kwargs):
             _ = (args, kwargs)
 
+        def set_xlim(self, *args, **kwargs):
+            _ = (args, kwargs)
+
     class FakeFigure:
         def tight_layout(self):
             return None
@@ -146,5 +149,8 @@ def test_generate_trace_graph_writes_device_memory_stack_plot(tmp_path, monkeypa
     paths = generate_trace_graph(output_dir=tmp_path, events=[], samples=samples, config=config)
 
     stack_path = tmp_path / "device_memory_stack_by_jobs.png"
+    dashboard_path = tmp_path / "all_in_one_dashboard.png"
     assert stack_path.exists()
+    assert dashboard_path.exists()
     assert stack_path in paths
+    assert dashboard_path in paths

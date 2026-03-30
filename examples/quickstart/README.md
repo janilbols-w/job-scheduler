@@ -101,6 +101,13 @@ Each mock worker owns a `JobClient` and periodically calls scheduler `POST /wake
 
 When launched by `seed_test_env.py --launch-mock-jobs`, each seed job can also define `init_delay_seconds` in [examples/quickstart/seed_config.json](examples/quickstart/seed_config.json) to stagger startup wake behavior.
 
+Each seed job can also configure randomized delay for successful worker responses:
+
+- `success_delay_min_seconds` (default `0.0`)
+- `success_delay_max_seconds` (default `0.0`)
+
+When a mock worker returns success from `POST /wake_up` or `POST /sleep`, it will delay the response by a random value uniformly sampled from `[success_delay_min_seconds, success_delay_max_seconds]`.
+
 Example terminal A:
 
 ```bash

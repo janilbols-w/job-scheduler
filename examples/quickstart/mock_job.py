@@ -30,6 +30,8 @@ class MockJob:
         mean_wakeup_seconds: float = 8.0,
         action_success_rate: float = 0.8,
         init_delay_seconds: float = 0.0,
+        success_delay_min_seconds: float = 0.0,
+        success_delay_max_seconds: float = 0.0,
     ):
         self.scheduler_url = scheduler_url
         self.job_id = job_id
@@ -41,6 +43,10 @@ class MockJob:
         self.mean_wakeup_seconds = max(0.1, float(mean_wakeup_seconds))
         self.action_success_rate = max(0.0, min(1.0, float(action_success_rate)))
         self.init_delay_seconds = max(0.0, float(init_delay_seconds))
+        self.success_delay_min_seconds = max(0.0, float(success_delay_min_seconds))
+        self.success_delay_max_seconds = max(0.0, float(success_delay_max_seconds))
+        if self.success_delay_max_seconds < self.success_delay_min_seconds:
+            self.success_delay_max_seconds = self.success_delay_min_seconds
         self.status = "asleep"
 
         self.job_client = JobClient(
@@ -60,7 +66,7 @@ class MockJob:
             self.status,
         )
 
-    def _random_action_response(self, action: str) -> JSONResponse:
+    async def _random_action_response(self, action: str) -> JSONResponse:
         ok = random.random() < self.action_success_rate
         status_code = 200 if ok else 503
         previous_status = self.status
@@ -68,6 +74,15 @@ class MockJob:
             self.status = "awake"
         elif ok and action == "sleep":
             self.status = "asleep"
+
+        delay_seconds = 0.0
+        if ok and self.success_delay_max_seconds > 0:
+            delay_seconds = random.uniform(
+                self.success_delay_min_seconds,
+                self.success_delay_max_seconds,
+            )
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
 
         if not ok:
             logger.warning(
@@ -80,11 +95,12 @@ class MockJob:
             )
         else:
             logger.info(
-                "mock_job action accepted job_id=%s action=%s status_transition=%s->%s",
+                "mock_job action accepted job_id=%s action=%s status_transition=%s->%s delay_seconds=%.3f",
                 self.job_id,
                 action,
                 previous_status,
                 self.status,
+                delay_seconds,
             )
         return JSONResponse(
             status_code=status_code,
@@ -94,6 +110,7 @@ class MockJob:
                 "action": action,
                 "base_url": self.base_url,
                 "status": self.status,
+                "delay_seconds": delay_seconds,
             },
         )
 
@@ -152,11 +169,11 @@ class MockJob:
 
         @app.post("/wake_up")
         async def wake_up() -> JSONResponse:
-            return self._random_action_response("wake_up")
+            return await self._random_action_response("wake_up")
 
         @app.post("/sleep")
         async def sleep() -> JSONResponse:
-            return self._random_action_response("sleep")
+            return await self._random_action_response("sleep")
 
         @app.get("/health")
         async def health() -> JSONResponse:
@@ -247,6 +264,18 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Full JSON list of devices for JobClient payload",
     )
+    parser.add_argument(
+        "--success-delay-min-seconds",
+        type=float,
+        default=0.0,
+        help="Minimum delay before successful /wake_up or /sleep response",
+    )
+    parser.add_argument(
+        "--success-delay-max-seconds",
+        type=float,
+        default=0.0,
+        help="Maximum delay before successful /wake_up or /sleep response",
+    )
     return parser.parse_args()
 
 
@@ -275,6 +304,8 @@ def main() -> None:
         mean_wakeup_seconds=args.mean_wakeup_seconds,
         action_success_rate=args.action_success_rate,
         init_delay_seconds=args.init_delay_seconds,
+        success_delay_min_seconds=args.success_delay_min_seconds,
+        success_delay_max_seconds=args.success_delay_max_seconds,
     )
     worker.run()
 

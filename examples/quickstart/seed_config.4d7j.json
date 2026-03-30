@@ -39,6 +39,8 @@
       "base_url": "http://127.0.0.1:9200",
       "priority": 5,
       "init_delay_seconds": 0.5,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
       "devices": [
         {
           "uuid": "d-0",
@@ -55,6 +57,8 @@
       "base_url": "http://127.0.0.1:9201",
       "priority": 6,
       "init_delay_seconds": 1.0,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
       "devices": [
         {
           "uuid": "d-1",
@@ -71,6 +75,8 @@
       "base_url": "http://127.0.0.1:9302",
       "priority": 4,
       "init_delay_seconds": 1.5,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
       "devices": [
         {
           "uuid": "d-2",
@@ -95,6 +101,8 @@
       "base_url": "http://127.0.0.1:9303",
       "priority": 3,
       "init_delay_seconds": 2.0,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
       "devices": [
         {
           "uuid": "d-0",
@@ -111,6 +119,8 @@
       "base_url": "http://127.0.0.1:9304",
       "priority": 3,
       "init_delay_seconds": 2.5,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
       "devices": [
         {
           "uuid": "d-1",
@@ -127,6 +137,8 @@
       "base_url": "http://127.0.0.1:9305",
       "priority": 3,
       "init_delay_seconds": 3.0,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
       "devices": [
         {
           "uuid": "d-2",
@@ -143,6 +155,8 @@
       "base_url": "http://127.0.0.1:9306",
       "priority": 3,
       "init_delay_seconds": 3.5,
+      "success_delay_min_seconds": 0.05,
+      "success_delay_max_seconds": 0.35,
       "devices": [
         {
           "uuid": "d-3",

@@ -98,6 +98,10 @@ def launch_mock_jobs(seed_jobs: list[dict], scheduler_url: str, mean_wakeup_seco
             str(action_success_rate),
             "--init-delay-seconds",
             str(job.get("init_delay_seconds", 0.0)),
+            "--success-delay-min-seconds",
+            str(job.get("success_delay_min_seconds", 0.0)),
+            "--success-delay-max-seconds",
+            str(job.get("success_delay_max_seconds", 0.0)),
         ]
         # Keep children in the same session so Ctrl+C from parent shell can stop them.
         proc = subprocess.Popen(cmd)

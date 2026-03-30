@@ -123,6 +123,8 @@ def test_launch_mock_jobs_builds_expected_subprocess_commands():
     assert "seed-job-0" in captured["cmd"]
     assert "--init-delay-seconds" in captured["cmd"]
     assert "1.25" in captured["cmd"]
+    assert "--success-delay-min-seconds" in captured["cmd"]
+    assert "--success-delay-max-seconds" in captured["cmd"]
 
 
 def test_seed_main_without_launch_adds_devices_and_jobs():
@@ -188,11 +190,11 @@ def test_mock_job_random_action_response_status_codes():
     )
 
     with patch("examples.quickstart.mock_job.random.random", return_value=0.1):
-        ok_response = worker._random_action_response("wake_up")
+        ok_response = asyncio.run(worker._random_action_response("wake_up"))
     assert ok_response.status_code == 200
 
     with patch("examples.quickstart.mock_job.random.random", return_value=0.9):
-        fail_response = worker._random_action_response("sleep")
+        fail_response = asyncio.run(worker._random_action_response("sleep"))
     assert fail_response.status_code == 503
 
 
@@ -209,14 +211,41 @@ def test_mock_job_status_transitions_on_successful_actions():
     assert worker.status == "asleep"
 
     with patch("examples.quickstart.mock_job.random.random", return_value=0.0):
-        wake_resp = worker._random_action_response("wake_up")
+        wake_resp = asyncio.run(worker._random_action_response("wake_up"))
     assert wake_resp.status_code == 200
     assert worker.status == "awake"
 
     with patch("examples.quickstart.mock_job.random.random", return_value=0.0):
-        sleep_resp = worker._random_action_response("sleep")
+        sleep_resp = asyncio.run(worker._random_action_response("sleep"))
     assert sleep_resp.status_code == 200
     assert worker.status == "asleep"
+
+
+def test_mock_job_success_response_delay_uses_configured_random_range():
+    worker = mock_job.MockJob(
+        scheduler_url="http://127.0.0.1:8000",
+        job_id="job-delay",
+        listen_host="127.0.0.1",
+        listen_port=9104,
+        devices=[{"uuid": "d-0", "host_name": "host-0", "id": 0, "type": "GPU", "vendor": "NVIDIA", "memory_size_mb": 8000}],
+        action_success_rate=1.0,
+        success_delay_min_seconds=0.2,
+        success_delay_max_seconds=0.8,
+    )
+
+    captured = {"sleep": None}
+
+    async def fake_sleep(seconds: float):
+        captured["sleep"] = seconds
+
+    with patch("examples.quickstart.mock_job.random.random", return_value=0.0), patch(
+        "examples.quickstart.mock_job.random.uniform", return_value=0.37
+    ), patch("examples.quickstart.mock_job.asyncio.sleep", side_effect=fake_sleep):
+        response = asyncio.run(worker._random_action_response("wake_up"))
+
+    assert response.status_code == 200
+    assert worker.status == "awake"
+    assert captured["sleep"] == 0.37
 
 
 def test_mock_job_periodic_wake_skips_when_awake():

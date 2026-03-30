@@ -206,6 +206,10 @@ class SimulationRunner:
                 str(self.args.mock_action_success_rate),
                 "--init-delay-seconds",
                 str(job.get("init_delay_seconds", 0.0)),
+                "--success-delay-min-seconds",
+                str(job.get("success_delay_min_seconds", 0.0)),
+                "--success-delay-max-seconds",
+                str(job.get("success_delay_max_seconds", 0.0)),
             ]
             self._spawn(f"mock:{job['job_id']}", cmd)
         logger.info("mock job launch completed")
