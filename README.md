@@ -370,6 +370,16 @@ Interactive defaults and input features:
   - user may provide device uuid/id not currently in `Resource`
   - requested `memory_size_mb` may exceed current resource capacity
 
+## Quickstart Examples
+
+For a scripted local environment (start API server, seed 4 devices across `host-0` and `host-1`, create initial jobs via `AdminClient`, and run mock jobs with random sleep/wake behavior), see:
+
+- [examples/quickstart/README.md](examples/quickstart/README.md)
+- [examples/quickstart/run_quickstart.sh](examples/quickstart/run_quickstart.sh)
+- [examples/quickstart/start_api_server.py](examples/quickstart/start_api_server.py)
+- [examples/quickstart/seed_test_env.py](examples/quickstart/seed_test_env.py)
+- [examples/quickstart/mock_job.py](examples/quickstart/mock_job.py)
+
 ## Testing
 
 Run the full test suite with:

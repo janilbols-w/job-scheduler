@@ -1,5 +1,6 @@
 import json
 from unittest.mock import patch
+from urllib import error
 
 from job_scheduler.api.api_client import AdminClient, JobClient
 from job_scheduler.core.resource import Device
@@ -160,3 +161,115 @@ def test_admin_client_remove_job_posts_job_id_payload():
     assert response == {"status": "removed", "removed": True}
     assert captured["url"] == "http://scheduler.test/remove_job"
     assert captured["payload"] == {"job_id": "job-remove"}
+
+
+def test_admin_client_set_trace_config_posts_enabled_payload():
+    captured = {}
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["method"] = req.get_method()
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return DummyResponse({"status": "ok", "enabled": False})
+
+    client = AdminClient("http://scheduler.test", timeout_seconds=3.0)
+
+    with patch("job_scheduler.api.api_client.request.urlopen", side_effect=fake_urlopen):
+        response = client.set_trace_config(False)
+
+    assert response == {"status": "ok", "enabled": False}
+    assert captured["url"] == "http://scheduler.test/trace/config"
+    assert captured["method"] == "POST"
+    assert captured["timeout"] == 3.0
+    assert captured["payload"] == {"enabled": False}
+
+
+def test_admin_client_get_trace_events_passes_clear_query_param():
+    calls = []
+
+    def fake_urlopen(req, timeout):
+        calls.append({"url": req.full_url, "method": req.get_method(), "timeout": timeout})
+        return DummyResponse({"status": "ok", "events": []})
+
+    client = AdminClient("http://scheduler.test", timeout_seconds=1.5)
+
+    with patch("job_scheduler.api.api_client.request.urlopen", side_effect=fake_urlopen):
+        response_default = client.get_trace_events()
+        response_clear = client.get_trace_events(clear=True)
+
+    assert response_default == {"status": "ok", "events": []}
+    assert response_clear == {"status": "ok", "events": []}
+    assert calls[0]["url"] == "http://scheduler.test/trace/events?clear=0"
+    assert calls[1]["url"] == "http://scheduler.test/trace/events?clear=1"
+    assert calls[0]["method"] == "GET"
+    assert calls[1]["method"] == "GET"
+    assert calls[0]["timeout"] == 1.5
+    assert calls[1]["timeout"] == 1.5
+
+
+def test_admin_client_collects_client_trace_events_for_success_request():
+    def fake_urlopen(req, timeout):
+        _ = (req, timeout)
+        return DummyResponse({"status": "ok"})
+
+    client = AdminClient("http://scheduler.test")
+
+    with patch("job_scheduler.api.api_client.request.urlopen", side_effect=fake_urlopen):
+        client.get_resource()
+
+    traces = client.get_client_trace_events(clear=False)
+    assert len(traces) == 1
+    assert traces[0]["component"] == "api_client"
+    assert traces[0]["event"] == "api_request"
+    assert traces[0]["ok"] is True
+    assert traces[0]["method"] == "GET"
+    assert traces[0]["path"] == "/resource"
+
+    cleared = client.get_client_trace_events(clear=True)
+    assert len(cleared) == 1
+    assert client.get_client_trace_events(clear=False) == []
+
+
+def test_admin_client_collects_client_trace_events_for_error_request():
+    def fake_urlopen(req, timeout):
+        _ = (req, timeout)
+        raise error.URLError("connection refused")
+
+    client = AdminClient("http://scheduler.test")
+
+    with patch("job_scheduler.api.api_client.request.urlopen", side_effect=fake_urlopen):
+        try:
+            client.get_resource()
+        except error.URLError:
+            pass
+
+    traces = client.get_client_trace_events(clear=True)
+    assert len(traces) == 1
+    assert traces[0]["component"] == "api_client"
+    assert traces[0]["event"] == "api_request"
+    assert traces[0]["ok"] is False
+    assert traces[0]["method"] == "GET"
+    assert traces[0]["path"] == "/resource"
+    assert "connection refused" in traces[0]["error"]
+
+
+def test_admin_client_trace_toggle_disables_and_reenables_local_trace_collection():
+    def fake_urlopen(req, timeout):
+        _ = (req, timeout)
+        return DummyResponse({"status": "ok"})
+
+    client = AdminClient("http://scheduler.test")
+
+    with patch("job_scheduler.api.api_client.request.urlopen", side_effect=fake_urlopen):
+        client.configure_trace_events(False)
+        client.get_resource()
+        assert client.get_client_trace_events(clear=False) == []
+
+        client.configure_trace_events(True)
+        client.get_resource()
+
+    traces = client.get_client_trace_events(clear=True)
+    assert len(traces) == 1
+    assert traces[0]["event"] == "api_request"
+    assert traces[0]["ok"] is True

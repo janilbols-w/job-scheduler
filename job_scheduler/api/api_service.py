@@ -67,6 +67,10 @@ class RemoveJobRequest(BaseModel):
     job_id: str
 
 
+class TraceConfigRequest(BaseModel):
+    enabled: bool = True
+
+
 @app.get("/resource")
 async def get_resource():
     """Return current resource snapshot."""
@@ -179,6 +183,40 @@ async def remove_job(request: RemoveJobRequest):
             "endpoint": "/remove_job",
             "job_id": request.job_id,
             "removed": removed,
+        }
+    )
+
+
+@app.post("/trace/config")
+async def set_trace_config(request: TraceConfigRequest):
+    scheduler.configure_trace_events(request.enabled)
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "endpoint": "/trace/config",
+            "enabled": bool(request.enabled),
+        }
+    )
+
+
+@app.get("/trace/events")
+async def get_trace_events(clear: bool = False):
+    scheduler_events = scheduler.get_trace_events(clear=clear)
+    resource_events = scheduler.get_resource().get_trace_events(clear=clear)
+    workload_events = scheduler.get_workload().get_trace_events(clear=clear)
+
+    merged_events = list(scheduler_events) + list(resource_events) + list(workload_events)
+    merged_events.sort(key=lambda item: str(item.get("ts", "")))
+
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "endpoint": "/trace/events",
+            "clear": clear,
+            "scheduler": scheduler_events,
+            "resource": resource_events,
+            "workload": workload_events,
+            "events": merged_events,
         }
     )
 

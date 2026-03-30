@@ -19,6 +19,7 @@ class FakeResource:
         self.added_devices = []
         self.raise_on_add = None
         self.snapshot = {"device_count": 0, "hosts": {}}
+        self.trace_events = []
 
     def add_device(self, device: Device):
         if self.raise_on_add is not None:
@@ -28,13 +29,26 @@ class FakeResource:
     def debug_print(self) -> dict:
         return self.snapshot
 
+    def get_trace_events(self, clear: bool = False) -> list[dict]:
+        events = list(self.trace_events)
+        if clear:
+            self.trace_events.clear()
+        return events
+
 
 class FakeWorkload:
     def __init__(self):
         self.snapshot = {"job_count": 0, "jobs": [], "job_map": {}}
+        self.trace_events = []
 
     def debug_print(self) -> dict:
         return self.snapshot
+
+    def get_trace_events(self, clear: bool = False) -> list[dict]:
+        events = list(self.trace_events)
+        if clear:
+            self.trace_events.clear()
+        return events
 
 
 class FakeScheduler:
@@ -47,6 +61,8 @@ class FakeScheduler:
         self.add_job_result = True
         self.remove_job_result = True
         self.enqueue_changes_queue = True
+        self.trace_enabled = True
+        self.trace_events = []
 
     def get_resource(self):
         return self.resource
@@ -65,6 +81,15 @@ class FakeScheduler:
     def remove_job(self, job_id: str):
         self.removed_jobs.append(job_id)
         return self.remove_job_result
+
+    def configure_trace_events(self, enabled: bool):
+        self.trace_enabled = bool(enabled)
+
+    def get_trace_events(self, clear: bool = False) -> list[dict]:
+        events = list(self.trace_events)
+        if clear:
+            self.trace_events.clear()
+        return events
 
 
 DEVICE_PAYLOAD = {
@@ -284,5 +309,63 @@ def test_remove_job_returns_not_found_response():
             "job_id": "job-404",
             "removed": False,
         }
+
+    asyncio.run(scenario())
+
+
+def test_trace_config_updates_scheduler_trace_flag():
+    fake_scheduler = FakeScheduler()
+    request_model = api_service.TraceConfigRequest(enabled=False)
+
+    async def scenario():
+        with patch.object(api_service, "scheduler", fake_scheduler):
+            response = await api_service.set_trace_config(request_model)
+        payload = decode_response(response)
+        assert payload == {
+            "status": "ok",
+            "endpoint": "/trace/config",
+            "enabled": False,
+        }
+        assert fake_scheduler.trace_enabled is False
+
+    asyncio.run(scenario())
+
+
+def test_get_trace_events_returns_component_and_merged_events_sorted():
+    fake_scheduler = FakeScheduler()
+    fake_scheduler.trace_events = [
+        {"component": "scheduler", "event": "scheduler_enqueue", "ts": "2026-03-30T10:00:03+00:00"},
+    ]
+    fake_scheduler.resource.trace_events = [
+        {"component": "resource", "event": "resource_device_added", "ts": "2026-03-30T10:00:01+00:00"},
+    ]
+    fake_scheduler.workload.trace_events = [
+        {"component": "workload", "event": "workload_job_added", "ts": "2026-03-30T10:00:02+00:00"},
+    ]
+
+    async def scenario():
+        with patch.object(api_service, "scheduler", fake_scheduler):
+            response = await api_service.get_trace_events(clear=True)
+        payload = decode_response(response)
+        assert payload["status"] == "ok"
+        assert payload["endpoint"] == "/trace/events"
+        assert payload["clear"] is True
+        assert payload["scheduler"] == [
+            {"component": "scheduler", "event": "scheduler_enqueue", "ts": "2026-03-30T10:00:03+00:00"}
+        ]
+        assert payload["resource"] == [
+            {"component": "resource", "event": "resource_device_added", "ts": "2026-03-30T10:00:01+00:00"}
+        ]
+        assert payload["workload"] == [
+            {"component": "workload", "event": "workload_job_added", "ts": "2026-03-30T10:00:02+00:00"}
+        ]
+        assert [event["component"] for event in payload["events"]] == [
+            "resource",
+            "workload",
+            "scheduler",
+        ]
+        assert fake_scheduler.trace_events == []
+        assert fake_scheduler.resource.trace_events == []
+        assert fake_scheduler.workload.trace_events == []
 
     asyncio.run(scenario())

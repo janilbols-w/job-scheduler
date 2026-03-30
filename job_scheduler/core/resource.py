@@ -1,4 +1,6 @@
 from dataclasses import dataclass, asdict
+import time
+from datetime import datetime, timezone
 from typing import ClassVar, Optional
 import logging
 
@@ -61,10 +63,10 @@ class Device:
             memory_size_mb=int(data['memory_size_mb']),
         )
 
-class Resource:
+class ResourceBase:
     """Manages device resources from the system."""
 
-    _instance: ClassVar[Optional["Resource"]] = None
+    _instance: ClassVar[Optional["ResourceBase"]] = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -72,7 +74,7 @@ class Resource:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, devices: Optional[list[Device]] = None):
+    def __init__(self, devices: Optional[list[Device]] = None, trace_events: Optional[bool] = None):
         if self._initialized:
             return
 
@@ -84,7 +86,7 @@ class Resource:
         self._initialized = True
 
     @classmethod
-    def get_instance(cls) -> "Resource":
+    def get_instance(cls) -> "ResourceBase":
         return cls()
 
     def reset(self):
@@ -92,6 +94,17 @@ class Resource:
         self.devices.clear()
         self.device_map.clear()
         self.device_host_id_map.clear()
+        self._emit_trace("resource_reset")
+
+    def configure_trace_events(self, enabled: bool):
+        _ = enabled
+
+    def get_trace_events(self, clear: bool = False) -> list[dict[str, object]]:
+        _ = clear
+        return []
+
+    def _emit_trace(self, event_type: str, **payload: object) -> None:
+        _ = (event_type, payload)
 
     def add_device(self, device: Device):
         """Add a device to the resource manager."""
@@ -107,6 +120,13 @@ class Resource:
         self.devices.append(device)
         self.device_map[device.uuid] = device
         self.device_host_id_map[host_id_key] = device
+        self._emit_trace(
+            "resource_device_added",
+            uuid=device.uuid,
+            host_name=device.host_name,
+            id=device.id,
+            memory_size_mb=device.memory_size_mb,
+        )
 
 
     def add_devices(self, devices: list[Device]):
@@ -155,5 +175,47 @@ class Resource:
             device = self.device_map.pop(uuid)
             self.devices.remove(device)
             self.device_host_id_map.pop((device.host_name, device.id), None)
+            self._emit_trace("resource_device_removed", uuid=uuid, removed=True)
             return True
+        self._emit_trace("resource_device_removed", uuid=uuid, removed=False)
         return False
+
+
+class Resource(ResourceBase):
+    _instance: ClassVar[Optional["Resource"]] = None
+
+    def __init__(self, devices: Optional[list[Device]] = None, trace_events: Optional[bool] = None):
+        super().__init__(devices=devices, trace_events=trace_events)
+        if not hasattr(self, "trace_events_enabled"):
+            self.trace_events_enabled = bool(trace_events)
+        elif trace_events is not None:
+            self.trace_events_enabled = bool(trace_events)
+        if not hasattr(self, "_trace_started_at_monotonic"):
+            self._trace_started_at_monotonic = time.monotonic()
+        if not hasattr(self, "_trace_events"):
+            self._trace_events: list[dict[str, object]] = []
+
+    @classmethod
+    def get_instance(cls) -> "Resource":
+        return cls()
+
+    def configure_trace_events(self, enabled: bool):
+        self.trace_events_enabled = bool(enabled)
+
+    def get_trace_events(self, clear: bool = False) -> list[dict[str, object]]:
+        events = list(self._trace_events)
+        if clear:
+            self._trace_events.clear()
+        return events
+
+    def _emit_trace(self, event_type: str, **payload: object) -> None:
+        if not self.trace_events_enabled:
+            return
+        event: dict[str, object] = {
+            "component": "resource",
+            "event": event_type,
+            "t": round(time.monotonic() - self._trace_started_at_monotonic, 4),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        event.update(payload)
+        self._trace_events.append(event)

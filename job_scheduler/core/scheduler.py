@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import time
+from datetime import datetime, timezone
 from urllib import error, request
 
 from job_scheduler.core.resource import Device, Resource
@@ -9,7 +11,7 @@ from job_scheduler.core.workload import Job, Workload
 logger = logging.getLogger(__name__)
 
 
-class Scheduler:
+class SchedulerBase:
     """Long-running async scheduler that wakes queued jobs one by one."""
 
     def __init__(
@@ -17,6 +19,7 @@ class Scheduler:
         resource: Resource | None = None,
         workload: Workload | None = None,
         debug_mode: bool = False,
+        trace_events: bool = False,
     ):
         self.resource = resource if resource is not None else Resource.get_instance()
         self.workload = (
@@ -27,6 +30,7 @@ class Scheduler:
         self._jobs_to_wake_ids: set[str] = set()
         self._shutdown_event = asyncio.Event()
         self._worker_task: asyncio.Task | None = None
+        _ = trace_events
 
         if self.debug_mode:
             logger.info("debug_mode enabled: override impl wake/sleep methods")
@@ -40,6 +44,17 @@ class Scheduler:
         self._shutdown_event.clear()
         self._worker_task = asyncio.create_task(self._main_loop())
         logger.info("started async worker")
+        self._emit_trace("scheduler_started")
+
+    def configure_trace_events(self, enabled: bool):
+        _ = enabled
+
+    def get_trace_events(self, clear: bool = False) -> list[dict[str, object]]:
+        _ = clear
+        return []
+
+    def _emit_trace(self, event_type: str, **payload: object) -> None:
+        _ = (event_type, payload)
 
     def _job_exists_in_workload(self, job_id: str) -> bool:
         jobs = getattr(self.workload, "jobs", None)
@@ -54,6 +69,7 @@ class Scheduler:
                 "skip enqueue: job_id already exists in workload job_id=%s",
                 job.job_id,
             )
+            self._emit_trace("scheduler_enqueue", job_id=job.job_id, enqueued=False, reason="already_in_workload", queue_size=self.jobs_to_wake_up.qsize())
             return
 
         if job.job_id in self._jobs_to_wake_ids:
@@ -61,10 +77,12 @@ class Scheduler:
                 "skip enqueue: job_id already exists in jobs_to_wake_up job_id=%s",
                 job.job_id,
             )
+            self._emit_trace("scheduler_enqueue", job_id=job.job_id, enqueued=False, reason="already_in_queue", queue_size=self.jobs_to_wake_up.qsize())
             return
 
         self._jobs_to_wake_ids.add(job.job_id)
         self.jobs_to_wake_up.put_nowait(job)
+        self._emit_trace("scheduler_enqueue", job_id=job.job_id, enqueued=True, queue_size=self.jobs_to_wake_up.qsize())
 
     def add_job(self, job: Job) -> bool:
         """Synchronously add a job to workload state."""
@@ -73,12 +91,17 @@ class Scheduler:
                 "reject add_job: job_id already exists in workload job_id=%s",
                 job.job_id,
             )
+            self._emit_trace("scheduler_add_job", job_id=job.job_id, added=False, reason="duplicate_workload")
             return False
-        return self.workload.add_job(job)
+        added = self.workload.add_job(job)
+        self._emit_trace("scheduler_add_job", job_id=job.job_id, added=added)
+        return added
 
     def remove_job(self, job_id: str) -> bool:
         """Synchronously remove a job from workload state."""
-        return self.workload.remove_job(job_id)
+        removed = self.workload.remove_job(job_id)
+        self._emit_trace("scheduler_remove_job", job_id=job_id, removed=removed)
+        return removed
 
     def get_resource(self) -> Resource:
         """Return scheduler resource reference."""
@@ -166,6 +189,7 @@ class Scheduler:
         """Sleep running jobs as needed to satisfy incoming virtual device requirements."""
         required_uuids = [device.uuid for device in vdevices]
         logger.info("sleep_jobs start required_vdevices=%s", required_uuids)
+        self._emit_trace("scheduler_sleep_start", required_vdevices=required_uuids)
 
         if not hasattr(self.workload, "get_jobs_on_device"):
             logger.warning("sleep_jobs unavailable: workload does not expose get_jobs_on_device")
@@ -254,6 +278,7 @@ class Scheduler:
                 return False
 
         logger.info("sleep_jobs success slept_job_ids=%s", sorted(slept_job_ids))
+        self._emit_trace("scheduler_sleep_done", success=True, slept_job_ids=sorted(slept_job_ids))
         return True
 
     async def _impl_wake_up_job(
@@ -403,9 +428,11 @@ class Scheduler:
                 pass
 
         self._worker_task = None
+        self._emit_trace("scheduler_stopped")
 
     async def _main_loop(self):
         logger.info("main loop running")
+        self._emit_trace("scheduler_loop_start")
         self._debug_print_state("loop_start")
 
         while True:
@@ -418,16 +445,76 @@ class Scheduler:
                 continue
 
             self._jobs_to_wake_ids.discard(item.job_id)
+            self._emit_trace("scheduler_dequeued", job_id=item.job_id, queue_size=self.jobs_to_wake_up.qsize())
 
             try:
-                await self.wake_up_job(item)
+                ok = await self.wake_up_job(item)
+                self._emit_trace("scheduler_wake_result", job_id=item.job_id, success=ok)
             except Exception as exc:
                 logger.exception("wake failed job_id=%s error=%s", item.job_id, exc)
+                self._emit_trace("scheduler_wake_result", job_id=item.job_id, success=False, error=str(exc))
             finally:
                 self._debug_print_state("post_process", item.job_id)
 
         logger.info("main loop exiting")
+        self._emit_trace("scheduler_loop_exit")
         self._debug_print_state("loop_exit")
+
+
+class Scheduler(SchedulerBase):
+    def __init__(
+        self,
+        resource: Resource | None = None,
+        workload: Workload | None = None,
+        debug_mode: bool = False,
+        trace_events: bool = False,
+    ):
+        super().__init__(
+            resource=resource,
+            workload=workload,
+            debug_mode=debug_mode,
+            trace_events=trace_events,
+        )
+        if not hasattr(self, "trace_events_enabled"):
+            self.trace_events_enabled = bool(trace_events)
+        else:
+            self.trace_events_enabled = bool(trace_events)
+        if not hasattr(self, "_trace_started_at_monotonic"):
+            self._trace_started_at_monotonic = time.monotonic()
+        if not hasattr(self, "_trace_events"):
+            self._trace_events: list[dict[str, object]] = []
+
+        self._configure_child_trace(self.resource, self.trace_events_enabled)
+        self._configure_child_trace(self.workload, self.trace_events_enabled)
+
+    @staticmethod
+    def _configure_child_trace(component: object, enabled: bool) -> None:
+        configure = getattr(component, "configure_trace_events", None)
+        if callable(configure):
+            configure(bool(enabled))
+
+    def configure_trace_events(self, enabled: bool):
+        self.trace_events_enabled = bool(enabled)
+        self._configure_child_trace(self.resource, self.trace_events_enabled)
+        self._configure_child_trace(self.workload, self.trace_events_enabled)
+
+    def get_trace_events(self, clear: bool = False) -> list[dict[str, object]]:
+        events = list(self._trace_events)
+        if clear:
+            self._trace_events.clear()
+        return events
+
+    def _emit_trace(self, event_type: str, **payload: object) -> None:
+        if not self.trace_events_enabled:
+            return
+        event: dict[str, object] = {
+            "component": "scheduler",
+            "event": event_type,
+            "t": round(time.monotonic() - self._trace_started_at_monotonic, 4),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        event.update(payload)
+        self._trace_events.append(event)
 
 
 async def main():

@@ -1,4 +1,6 @@
 import json
+import time
+from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 from urllib import request
 
@@ -11,6 +13,28 @@ class ClientBase:
     def __init__(self, base_url: str, timeout_seconds: float = 5.0):
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = max(0.1, float(timeout_seconds))
+        self._trace_events: list[dict[str, Any]] = []
+        self._trace_enabled = True
+
+    def configure_trace_events(self, enabled: bool) -> None:
+        self._trace_enabled = bool(enabled)
+
+    def get_client_trace_events(self, clear: bool = False) -> list[dict[str, Any]]:
+        events = list(self._trace_events)
+        if clear:
+            self._trace_events.clear()
+        return events
+
+    def _emit_trace(self, event_type: str, **payload: Any) -> None:
+        if not self._trace_enabled:
+            return
+        event: dict[str, Any] = {
+            "component": "api_client",
+            "event": event_type,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        event.update(payload)
+        self._trace_events.append(event)
 
     def _build_url(self, path: str) -> str:
         if not path.startswith("/"):
@@ -23,6 +47,7 @@ class ClientBase:
         path: str,
         payload: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        started_at = time.monotonic()
         data: bytes | None = None
         headers = {"Accept": "application/json"}
 
@@ -30,18 +55,40 @@ class ClientBase:
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
 
+        url = self._build_url(path)
         req = request.Request(
-            self._build_url(path),
+            url,
             method=method,
             data=data,
             headers=headers,
         )
 
-        with request.urlopen(req, timeout=self.timeout_seconds) as resp:
-            body = resp.read().decode("utf-8")
-            if not body:
-                return {}
-            return json.loads(body)
+        try:
+            with request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                body = resp.read().decode("utf-8")
+                self._emit_trace(
+                    "api_request",
+                    method=method,
+                    path=path,
+                    url=url,
+                    ok=True,
+                    status=getattr(resp, "status", None),
+                    latency_ms=round((time.monotonic() - started_at) * 1000.0, 2),
+                )
+                if not body:
+                    return {}
+                return json.loads(body)
+        except Exception as exc:
+            self._emit_trace(
+                "api_request",
+                method=method,
+                path=path,
+                url=url,
+                ok=False,
+                error=str(exc),
+                latency_ms=round((time.monotonic() - started_at) * 1000.0, 2),
+            )
+            raise
 
     @staticmethod
     def _device_payload(device: Device | Mapping[str, Any]) -> dict[str, Any]:
@@ -73,7 +120,7 @@ class ClientBase:
 
 
 class AdminClient(ClientBase):
-    """General-purpose synchronous REST client for job_scheduler.api_service."""
+    """General-purpose synchronous REST client for job_scheduler.api.api_service."""
 
     def add_device(self, device: Device | Mapping[str, Any]) -> dict[str, Any]:
         """POST /add_device"""
@@ -112,6 +159,15 @@ class AdminClient(ClientBase):
     def remove_job(self, job_id: str) -> dict[str, Any]:
         """POST /remove_job"""
         return self._request("POST", "/remove_job", payload={"job_id": job_id})
+
+    def set_trace_config(self, enabled: bool) -> dict[str, Any]:
+        """POST /trace/config"""
+        return self._request("POST", "/trace/config", payload={"enabled": bool(enabled)})
+
+    def get_trace_events(self, clear: bool = False) -> dict[str, Any]:
+        """GET /trace/events"""
+        suffix = "1" if clear else "0"
+        return self._request("GET", f"/trace/events?clear={suffix}")
 
 
 class JobClient(ClientBase):

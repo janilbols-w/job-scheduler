@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import time
+from datetime import datetime, timezone
 from typing import ClassVar, Dict, List, Optional
 import logging
 import threading
@@ -96,8 +97,8 @@ class Job:
         )
 
 
-class Workload:
-    _instance: ClassVar[Optional["Workload"]] = None
+class WorkloadBase:
+    _instance: ClassVar[Optional["WorkloadBase"]] = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -105,7 +106,12 @@ class Workload:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, resource: Resource, jobs: Optional[List[Job]] = None):
+    def __init__(
+        self,
+        resource: Resource,
+        jobs: Optional[List[Job]] = None,
+        trace_events: Optional[bool] = None,
+    ):
         if self._initialized:
             self.resource = resource
             return
@@ -121,7 +127,7 @@ class Workload:
         self._initialized = True
 
     @classmethod
-    def get_instance(cls, resource: Resource) -> "Workload":
+    def get_instance(cls, resource: Resource) -> "WorkloadBase":
         return cls(resource)
 
     def reset(self):
@@ -129,6 +135,17 @@ class Workload:
         with self._lock:
             self.jobs.clear()
             self.job_map.clear()
+        self._emit_trace("workload_reset")
+
+    def configure_trace_events(self, enabled: bool):
+        _ = enabled
+
+    def get_trace_events(self, clear: bool = False) -> list[dict[str, object]]:
+        _ = clear
+        return []
+
+    def _emit_trace(self, event_type: str, **payload: object) -> None:
+        _ = (event_type, payload)
 
     def _add_job_to_map(self, job: Job):
         for device in job.devices:
@@ -154,6 +171,12 @@ class Workload:
                         job_id=job.job_id,
                         device_uuid=device.uuid,
                     )
+                    self._emit_trace(
+                        "workload_job_rejected",
+                        reason="device_not_found",
+                        job_id=job.job_id,
+                        device_uuid=device.uuid,
+                    )
                     return False
 
                 requested_memory = job.gpu_memory_mb.get(device.uuid)
@@ -164,12 +187,28 @@ class Workload:
                         device_uuid=device.uuid,
                         requested_memory=requested_memory,
                     )
+                    self._emit_trace(
+                        "workload_job_rejected",
+                        reason="invalid_requested_memory",
+                        job_id=job.job_id,
+                        device_uuid=device.uuid,
+                        requested_memory=requested_memory,
+                    )
                     return False
 
                 current_usage = self.get_total_memory_usage_on_device(resource_device)
                 if current_usage + requested_memory > resource_device.memory_size_mb:
                     WorkloadError.log_error(
                         WorkloadError.INSUFFICIENT_MEMORY,
+                        job_id=job.job_id,
+                        device_uuid=device.uuid,
+                        current_usage_mb=current_usage,
+                        requested_mb=requested_memory,
+                        capacity_mb=resource_device.memory_size_mb,
+                    )
+                    self._emit_trace(
+                        "workload_job_rejected",
+                        reason="insufficient_memory",
                         job_id=job.job_id,
                         device_uuid=device.uuid,
                         current_usage_mb=current_usage,
@@ -190,6 +229,12 @@ class Workload:
                 "Accept add_job: job_id=%s devices=%s",
                 job.job_id,
                 [device.uuid for device in job.devices],
+            )
+            self._emit_trace(
+                "workload_job_added",
+                job_id=job.job_id,
+                devices=[device.uuid for device in job.devices],
+                priority=job.priority,
             )
             return True
 
@@ -249,4 +294,55 @@ class Workload:
                 self.job_map = previous_job_map
                 raise
 
+            self._emit_trace(
+                "workload_job_removed",
+                job_id=job_id,
+                removed=True,
+            )
+
             return True
+
+
+class Workload(WorkloadBase):
+    _instance: ClassVar[Optional["Workload"]] = None
+
+    def __init__(
+        self,
+        resource: Resource,
+        jobs: Optional[List[Job]] = None,
+        trace_events: Optional[bool] = None,
+    ):
+        super().__init__(resource=resource, jobs=jobs, trace_events=trace_events)
+        if not hasattr(self, "trace_events_enabled"):
+            self.trace_events_enabled = bool(trace_events)
+        elif trace_events is not None:
+            self.trace_events_enabled = bool(trace_events)
+        if not hasattr(self, "_trace_started_at_monotonic"):
+            self._trace_started_at_monotonic = time.monotonic()
+        if not hasattr(self, "_trace_events"):
+            self._trace_events: list[dict[str, object]] = []
+
+    @classmethod
+    def get_instance(cls, resource: Resource) -> "Workload":
+        return cls(resource)
+
+    def configure_trace_events(self, enabled: bool):
+        self.trace_events_enabled = bool(enabled)
+
+    def get_trace_events(self, clear: bool = False) -> list[dict[str, object]]:
+        events = list(self._trace_events)
+        if clear:
+            self._trace_events.clear()
+        return events
+
+    def _emit_trace(self, event_type: str, **payload: object) -> None:
+        if not self.trace_events_enabled:
+            return
+        event: dict[str, object] = {
+            "component": "workload",
+            "event": event_type,
+            "t": round(time.monotonic() - self._trace_started_at_monotonic, 4),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        event.update(payload)
+        self._trace_events.append(event)
