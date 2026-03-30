@@ -12,6 +12,9 @@ This project models three core concerns:
 
 The API server exposes endpoints for:
 
+- registering devices into resource state
+- reading current resource state
+- reading current workload state
 - queueing a job to be woken up
 - adding a job into active workload state
 - removing a job from active workload state
@@ -19,12 +22,17 @@ The API server exposes endpoints for:
 ## Project Layout
 
 ```text
+examples/
+  interactive_scheduler.py
 job_scheduler/
+  api_client.py
   api_service.py
   resource.py
   scheduler_core.py
   workload.py
 tests/
+  test_api_client.py
+  test_api_service.py
   test_resource.py
   test_scheduler_core.py
   test_workload.py
@@ -98,9 +106,42 @@ Responsibilities:
 - add/remove jobs in active workload state
 - expose resource/workload references
 
+Important behavior:
+
+- rejects `add_job` when `job_id` already exists in workload
+- skips enqueue when `job_id` already exists in workload
+- skips enqueue when `job_id` is already pending in `jobs_to_wake_up`
+- attempts `sleep_jobs(...)` before wake-up if add fails due to capacity constraints
+- processes `sleep_jobs(...)` requirements in parallel per virtual device
+
 ## API
 
 The API is implemented in [job_scheduler/api_service.py](job_scheduler/api_service.py).
+
+### `GET /resource`
+
+Return the current resource snapshot.
+
+### `GET /workload`
+
+Return the current workload snapshot.
+
+### `POST /add_device`
+
+Register one physical device into `Resource`.
+
+Request body:
+
+```json
+{
+  "uuid": "gpu-1",
+  "host_name": "node-1",
+  "id": 0,
+  "type": "GPU",
+  "vendor": "NVIDIA",
+  "memory_size_mb": 16000
+}
+```
 
 ### `POST /wake_up`
 
@@ -130,6 +171,11 @@ Request body:
 
 Add a job directly into active workload state.
 
+Response behavior:
+
+- returns `added` when accepted into workload
+- returns `rejected` when duplicate `job_id` or resource constraints reject the job
+
 ### `POST /remove_job`
 
 Remove a job from active workload state.
@@ -140,6 +186,49 @@ Request body:
 {
   "job_id": "job-1"
 }
+```
+
+### Wake-Up Response Notes
+
+`POST /wake_up` returns:
+
+- `scheduled` when the job is newly enqueued
+- `ignored` when scheduler skips enqueue because the `job_id` already exists in workload or is already pending in the wake queue
+
+## Clients
+
+The REST clients are implemented in [job_scheduler/api_client.py](job_scheduler/api_client.py).
+
+Available clients:
+
+- `ClientBase`: shared HTTP and payload helpers
+- `AdminClient`: general-purpose client for device, resource, workload, add-job, wake-up, and remove-job operations
+- `JobClient`: job-scoped client initialized with fixed job information and only allowed to call `wake_up()`
+
+Example:
+
+```python
+from job_scheduler import AdminClient, JobClient
+
+admin_client = AdminClient("http://127.0.0.1:8000")
+resource = admin_client.get_resource()
+
+job_client = JobClient(
+  scheduler_base_url="http://127.0.0.1:8000",
+  job_id="job-1",
+  base_url="http://job-1",
+  devices=[
+    {
+      "uuid": "gpu-1",
+      "host_name": "host_main",
+      "id": 0,
+      "type": "GPU",
+      "vendor": "NVIDIA",
+      "memory_size_mb": 12000,
+    }
+  ],
+)
+response = job_client.wake_up()
 ```
 
 ## Lifecycle
@@ -240,14 +329,46 @@ pip install -e .
 Start the API server with uvicorn:
 
 ```bash
-uvicorn job_scheduler.api_service:app --host 0.0.0.0 --port 8000 --log-level info
+uvicorn job_scheduler.api.api_service:app --host 0.0.0.0 --port 8000 --log-level info
 ```
 
 Or run the module entrypoint directly:
 
 ```bash
-python -m job_scheduler.api_service
+python -m job_scheduler.api.api_service
 ```
+
+## Interactive Example
+
+An interactive CLI demo is available at [examples/interactive_scheduler.py](examples/interactive_scheduler.py).
+
+Run it from the project root:
+
+```bash
+python examples/interactive_scheduler.py
+```
+
+Menu actions include:
+
+- create devices in `Resource`
+- start `Scheduler` in debug mode
+- add/remove jobs through `Scheduler`
+- display current `Resource` and `Workload` snapshots
+- enqueue a job for scheduler wake-up processing
+
+Interactive defaults and input features:
+
+- `create_device` defaults:
+  - `uuid`: generated incrementally as `d-0`, `d-1`, ...
+  - `host_name`: `host_main`
+  - `id`: next incremental id for the selected host
+  - `type`: `GPU`
+  - `vendor`: `NVIDIA`
+  - `memory_size_mb`: `8000`
+- add/wake flows default `base_url` to `http://<job_id>`
+- add/wake flows support virtual requirement mode:
+  - user may provide device uuid/id not currently in `Resource`
+  - requested `memory_size_mb` may exceed current resource capacity
 
 ## Testing
 
@@ -266,5 +387,6 @@ pytest tests/test_scheduler_core.py
 ## Notes
 
 - `Resource` and `Workload` currently use singleton-style instances.
-- `Scheduler.wake_up_job` is still a placeholder for the real wake-up implementation.
-- Debug helpers use logging rather than direct printing.
+- wake/sleep job actions call worker endpoints via HTTP (`<base_url>/wake_up` and `<base_url>/sleep`).
+- debug mode overrides wake/sleep implementations with simulated success after timeout.
+- debug helpers use logging rather than direct printing.

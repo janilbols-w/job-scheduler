@@ -1,7 +1,7 @@
 import pytest
 import logging
 
-from job_scheduler.resource import Device, Resource
+from job_scheduler.core.resource import Device, Resource
 
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ def test_add_device_rejects_duplicate_host_id_pair():
     d2 = Device.from_request_json(device_payload(id=3, uuid="uuid-b", host_name="node-1"))
 
     resource.add_device(d1)
-    with pytest.raises(RuntimeError, match="Duplicate \(host_name, id\) pair"):
+    with pytest.raises(RuntimeError, match=r"Duplicate \(host_name, id\) pair"):
         resource.add_device(d2)
 
 

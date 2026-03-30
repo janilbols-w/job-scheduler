@@ -2,8 +2,8 @@ import logging
 from typing import Optional
 import pytest
 
-from job_scheduler.resource import Device, Resource
-from job_scheduler.workload import Job, Workload, WorkloadError
+from job_scheduler.core.resource import Device, Resource
+from job_scheduler.core.workload import Job, Workload, WorkloadError
 
 
 logger = logging.getLogger(__name__)
@@ -237,3 +237,31 @@ def test_job_verify_values_rejects_unknown_gpu_memory_uuid():
             priority=1,
             timestamp=1.0,
         )
+
+
+def test_workload_debug_print_snapshot():
+    logger.info("Running test_workload_debug_print_snapshot")
+    d1 = make_device("gpu-1", 0, 16000)
+    d2 = make_device("gpu-2", 1, 24000)
+
+    _, workload = make_resource_and_workload([d1, d2])
+    job = Job(
+        job_id="job-debug",
+        base_url="http://worker-debug",
+        devices=[d1, d2],
+        priority=7,
+    )
+
+    assert workload.add_job(job) is True
+    snapshot = workload.debug_print()
+    logger.info("debug snapshot=%s", snapshot)
+
+    assert snapshot["job_count"] == 1
+    assert "jobs" in snapshot
+    assert "job_map" in snapshot
+    assert snapshot["jobs"][0]["job_id"] == "job-debug"
+    assert snapshot["jobs"][0]["base_url"] == "http://worker-debug"
+    assert snapshot["jobs"][0]["priority"] == 7
+    assert snapshot["jobs"][0]["devices"] == ["gpu-1", "gpu-2"]
+    assert snapshot["job_map"]["gpu-1"] == ["job-debug"]
+    assert snapshot["job_map"]["gpu-2"] == ["job-debug"]

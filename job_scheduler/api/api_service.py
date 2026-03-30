@@ -1,12 +1,16 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from job_scheduler.resource import Device, Resource
-from job_scheduler.scheduler_core import Scheduler
-from job_scheduler.workload import Job
+from job_scheduler.core.resource import Device, Resource
+from job_scheduler.core.scheduler import Scheduler
+from job_scheduler.core.workload import Job
+
+
+logger = logging.getLogger(__name__)
 
 resource = Resource.get_instance()
 scheduler = Scheduler(resource=resource)
@@ -63,20 +67,84 @@ class RemoveJobRequest(BaseModel):
     job_id: str
 
 
+@app.get("/resource")
+async def get_resource():
+    """Return current resource snapshot."""
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "endpoint": "/resource",
+            "resource": scheduler.get_resource().debug_print(),
+        }
+    )
+
+
+@app.get("/workload")
+async def get_workload():
+    """Return current workload snapshot."""
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "endpoint": "/workload",
+            "workload": scheduler.get_workload().debug_print(),
+        }
+    )
+
+
+@app.post("/add_device")
+async def add_device(request: DeviceInfo):
+    """Register one physical device into Resource."""
+    device = Device(
+        uuid=request.uuid,
+        host_name=request.host_name,
+        id=request.id,
+        type=request.type,
+        vendor=request.vendor,
+        memory_size_mb=request.memory_size_mb,
+    )
+
+    try:
+        scheduler.get_resource().add_device(device)
+    except Exception as exc:
+        logger.warning("add_device rejected uuid=%s reason=%s", request.uuid, exc)
+        return JSONResponse(
+            content={
+                "status": "rejected",
+                "endpoint": "/add_device",
+                "device": request.model_dump(),
+                "message": str(exc),
+            }
+        )
+
+    return JSONResponse(
+        content={
+            "status": "added",
+            "endpoint": "/add_device",
+            "device": request.model_dump(),
+        }
+    )
+
+
 @app.post("/wake_up")
 async def wake_up(request: JobRequest):
     """Receive a wake request and enqueue it into scheduler wake-up queue."""
     job = request.to_workload_job()
+
+    queue_size_before = scheduler.jobs_to_wake_up.qsize()
     scheduler.add_job_to_wake(job)
+    queue_size_after = scheduler.jobs_to_wake_up.qsize()
+    enqueued = queue_size_after > queue_size_before
 
     return JSONResponse(
         content={
-            "status": "scheduled",
+            "status": "scheduled" if enqueued else "ignored",
             "endpoint": "/wake_up",
             "job_id": request.job_id,
             "base_url": request.base_url,
             "priority": request.priority,
-            "devices": [device.dict() for device in request.devices],
+            "devices": [device.model_dump() for device in request.devices],
+            "enqueued": enqueued,
+            "queue_size": queue_size_after,
         }
     )
 
@@ -94,7 +162,7 @@ async def add_job(request: JobRequest):
             "job_id": request.job_id,
             "base_url": request.base_url,
             "priority": request.priority,
-            "devices": [device.dict() for device in request.devices],
+            "devices": [device.model_dump() for device in request.devices],
             "added": added,
         }
     )
@@ -117,4 +185,4 @@ async def remove_job(request: RemoveJobRequest):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("api_service:app", host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run("job_scheduler.api.api_service:app", host="0.0.0.0", port=8000, log_level="info")

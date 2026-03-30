@@ -11,7 +11,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'job_scheduler=job_scheduler.api_service:app',
+            'job_scheduler=job_scheduler.api.api_service:app',
         ],
     },
 )
